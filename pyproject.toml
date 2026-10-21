@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hrb-common-libs"
+version = "0.1.0"
+description = "Shared connector + observability library for the HRB chatbot microservices split"
+requires-python = ">=3.12,<3.13"
+
+[project.optional-dependencies]
+observability = ["structlog", "tenacity"]
+db = ["hrb-common-libs[observability]", "psycopg[binary]"]
+cache = ["hrb-common-libs[observability]", "redis"]
+llm = ["hrb-common-libs[observability]", "openai", "langchain-openai"]
+mcp = ["hrb-common-libs[observability]", "mcp"]
+storage = ["hrb-common-libs[observability]", "boto3"]
+web = ["hrb-common-libs[observability]", "tavily-python"]
+auth = ["hrb-common-libs[observability]", "pyjwt"]
+email = ["hrb-common-libs[observability]", "boto3"]
+ci = ["hrb-common-libs[observability]", "PyGithub"]
+dev = ["pytest", "pytest-asyncio"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
