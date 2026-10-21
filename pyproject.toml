@@ -11,15 +11,19 @@ requires-python = ">=3.12,<3.13"
 [project.optional-dependencies]
 observability = ["structlog", "tenacity"]
 db = ["hrb-common-libs[observability]", "psycopg[binary]"]
+vectorstore = ["hrb-common-libs[observability]", "chromadb"]
 cache = ["hrb-common-libs[observability]", "redis"]
 llm = ["hrb-common-libs[observability]", "openai", "langchain-openai"]
-mcp = ["hrb-common-libs[observability]", "mcp"]
+mcp = ["hrb-common-libs[observability]", "mcp==1.9.4", "pydantic==2.13.5"]
 storage = ["hrb-common-libs[observability]", "boto3"]
 web = ["hrb-common-libs[observability]", "tavily-python"]
-auth = ["hrb-common-libs[observability]", "pyjwt"]
+auth = ["hrb-common-libs[observability]", "httpx", "pyjwt"]
 email = ["hrb-common-libs[observability]", "boto3"]
 ci = ["hrb-common-libs[observability]", "PyGithub"]
-dev = ["pytest", "pytest-asyncio"]
+dev = ["pytest", "pytest-asyncio", "respx"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

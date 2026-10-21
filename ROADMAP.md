@@ -2,52 +2,121 @@
 
 Phase-by-phase plan and history, same convention as `hrb_chatbot_v2`'s `docs/agent-reference/RAG-ROADMAP.md`. A phase gets a `**Spec:**` block written before its code starts (`/spec-new`), and its checkbox flips to `- [x]` once implemented and verified.
 
+**Scope correction, found while starting Phase 2 (2026-10-21):** `common/clients/db_client/` in `hrb_chatbot_v2` isn't just Postgres - it also holds vector-store clients (Chroma/Pinecone) with no extra of their own, and 13 feature-specific business stores (interview Q&A, conversation memory, HITL, CI/CD, ...) that must never be extracted into a shared library - that's exactly the business-logic-leak the Common-Libs Connectors doc already warned against. Corrected: added an 11th extra, `vectorstore`; narrowed `db` to a generic connection manager (new code, not a literal port - nothing purely generic existed to port); excluded every `*_store.py` file - those stay in whichever service owns them when that service is actually built.
+
 ## Status at a glance
 
 | Phase | Title | Status | Spec |
 |---|---|---|---|
 | 1 | observability extra | ✅ Done | written |
-| 2 | db extra | 📋 Planned | not yet written |
-| 3 | cache extra | 📋 Planned | not yet written |
-| 4 | llm extra | 📋 Planned | not yet written |
-| 5 | mcp extra | 📋 Planned | not yet written |
-| 6 | storage extra | 📋 Planned | not yet written |
-| 7 | web extra | 📋 Planned | not yet written |
-| 8 | auth extra | 📋 Planned | not yet written |
-| 9 | email extra | 📋 Planned | not yet written |
-| 10 | ci extra | 📋 Planned | not yet written |
+| 2 | db extra | ✅ Done | written |
+| 3 | cache extra | ✅ Done | written |
+| 4 | llm extra | ✅ Done | written |
+| 5 | mcp extra | ✅ Done | written |
+| 6 | storage extra | ✅ Done | written |
+| 7 | web extra | ✅ Done | written |
+| 8 | auth extra | ✅ Done | written |
+| 9 | email extra | ✅ Done | written |
+| 10 | ci extra | ✅ Done | written |
+| 11 | vectorstore extra | ✅ Done | written |
 
 ## Phases
 
-- [x] **Phase 1 (done) — observability extra.** New code (not an extraction): logger, request_id context, retry/backoff decorator, circuit breaker (generalizing `hrb_chatbot_v2`'s Phase 185 MCP-specific implementation), secrets-resolution helper. Every other extra depends on this one. Full requirements in `hrb_chatbot_v2`'s `docs/dev-reference/nfr-platform-components/`.
+- [x] **Phase 1 (done) — observability extra.** New code (not an extraction): logger, request_id context, retry/backoff decorator, circuit breaker (generalizing `hrb_chatbot_v2`'s Phase 185 MCP-specific implementation), secrets-resolution helper. Every other extra depends on this one.
   - **Spec:**
-    - **Context:** first real code in this repo - every other extra (`db`, `cache`, `llm`, ...) depends on this one, so it has to exist before any extraction phase starts.
-    - **Source:** not an extraction. The retry/circuit-breaker semantics generalize the real, live pattern in `hrb_chatbot_v2`'s `src/hrb_chatbot/ai/rag_pipeline/tools/mcp_tools/__init__.py` (`MCP_CIRCUIT_BREAKER_FAILURE_THRESHOLD = 2`, `MCP_CIRCUIT_BREAKER_COOLDOWN_SECONDS = 10`, verified against the code directly, not assumed) - that implementation is Postgres-backed and MCP-specific; this one is in-memory and generic, same failure-threshold + cooldown semantics, not a literal port.
-    - **API surface:**
-      - `get_logger(name: str) -> logging.Logger` - structured JSON-capable logger, matching `hrb_chatbot_v2`'s `common/logging/logger.py` shape.
-      - `log_backend_call(logger, service, operation, **context)` - context manager, direct port of `hrb_chatbot_v2`'s `common/logging/call_logger.py` (already generic, no change needed beyond the import path).
-      - `RequestContext` - a contextvar-backed holder for the current `request_id`, with `set_request_id()`/`get_request_id()`.
-      - `with_retry(max_attempts=3, backoff_base_seconds=0.5)` - decorator, built on `tenacity`.
-      - `CircuitBreaker(name, failure_threshold=2, cooldown_seconds=10)` - in-memory, thread-safe counter + last-failure timestamp; `__enter__`/`__exit__` raises a typed `CircuitOpenError` if tripped, records success/failure on exit otherwise.
-      - `read_secret(key: str, default: str | None = None) -> str | None` - thin wrapper, same semantics as `hrb_chatbot_v2`'s `common.config.settings.read_setting`.
-    - **Behavior parity:** N/A (new code) except `log_backend_call`, which must behave identically to the existing `call_logger.py` - port its existing test file unmodified.
-    - **Out of scope:** no Secrets Manager SDK call yet (stub reading from env only - real Secrets Manager integration is a later phase once a consuming service actually needs it in AWS, not before). No distributed/shared circuit-breaker state (in-memory per-process only, matching the per-process assumption; a future phase may back it with Redis once `cache` extra exists).
+    - **Context:** first real code in this repo - every other extra depends on this one.
+    - **Source:** not an extraction. Retry/circuit-breaker semantics generalize the real, live pattern in `hrb_chatbot_v2`'s `mcp_tools/__init__.py` (`FAILURE_THRESHOLD = 2`, `COOLDOWN_SECONDS = 10`, verified against the code).
+    - **API surface:** `get_logger`, `log_backend_call`, `RequestContext` (`set_request_id`/`get_request_id`/`new_request_id`), `with_retry`, `CircuitBreaker`/`CircuitOpenError`, `read_secret`.
+    - **Behavior parity:** `log_backend_call` matches `call_logger.py` exactly.
+    - **Out of scope:** no Secrets Manager SDK call yet. No distributed circuit-breaker state (in-memory per-process only).
     - **Open questions:** none blocking.
 
-- [ ] **Phase 2 (planned) — db extra.** Extraction of `hrb_chatbot_v2`'s `common/clients/db_client/` into `src/hrb_common/db/`. Behavior must not change - every ported test must pass unmodified.
+- [x] **Phase 2 (done) — db extra.** NOT an extraction of the whole `db_client/` folder (see scope correction above). New code: a generic Postgres connection manager - async connection helper, settings-based config, schema-qualified identifier helper (supports the `hrb_chatbot_v2` schema-migration naming: `rag_ingestion`, `rag_retrieval`, `platform_*`, ...).
+  - **Spec:**
+    - **Context:** every `*_store.py` file in `hrb_chatbot_v2`'s `db_client/` independently calls `psycopg.connect(...)` with the same settings-reading pattern - that duplication is what's genuinely worth sharing, not the store classes themselves.
+    - **Source:** new code, pattern observed across multiple `*_store.py` files (not a literal port of any single one).
+    - **API surface:** `PostgresConnectionConfig` (reads `POSTGRES_DB_HOST/PORT/NAME/USER/PASSWORD`), `get_connection(config)`, `qualify(schema, table) -> str` (returns `"schema"."table"`, quoting both identifiers).
+    - **Behavior parity:** N/A - new code.
+    - **Out of scope:** no business-specific store classes (`conversation_store`, `interview_qa_store`, etc.) - those stay in their owning service. No connection pooling yet (a later phase, once a real service's load profile justifies it over one-connection-per-call).
+    - **Open questions:** none blocking.
 
-- [ ] **Phase 3 (planned) — cache extra.** Extraction of `cache_client/`.
+- [x] **Phase 3 (done) — cache extra.** NOT an extraction of `cache_client/` (same reasoning as Phase 2 - `answer_cache.py`/`embedding_cache.py` are feature-specific, no generic Redis wrapper exists to port). New code: a generic Redis connection helper plus the key-naming convention already fixed in the NFR Components doc (`{service}:{purpose}:{hash}`).
+  - **Spec:**
+    - **Context:** `cache_client/` has no `base_cache_client.py` - just two feature-specific caches. The generic piece worth sharing is the connection + naming convention, not the caching business logic.
+    - **Source:** new code.
+    - **API surface:** `get_redis_client(url=None)`, `build_cache_key(service, purpose, content_hash)`.
+    - **Behavior parity:** N/A - new code.
+    - **Out of scope:** no `AnswerCache`/`EmbeddingCache` classes - those stay in `rag_retrieval_service`/`rag_ingestion_service`.
+    - **Open questions:** none blocking.
 
-- [ ] **Phase 4 (planned) — llm extra.** Extraction of `llm_client/` (OpenAI/OpenRouter/Bedrock + embeddings).
+- [x] **Phase 4 (done) — llm extra.** Extraction of `llm_client/`'s generic provider-abstraction pieces: `base_llm_client.py`, `openai_client.py` (chat + embeddings), `open_router_client.py`. **Deferred, not forgotten:** `anthropic_client.py`, `bedrock_client.py`, `langchain_chat_model.py` - same pattern, ported in a fast-follow rather than rushed into this pass.
+  - **Spec:**
+    - **Context:** this folder is genuinely generic (CLAUDE.md's own Base*Client/Gateway pattern, no business logic) - the cleanest direct-port candidate found.
+    - **Source:** `hrb_chatbot_v2`'s `common/clients/llm_client/{base_llm_client,openai_client,open_router_client}.py`, read directly and ported with import paths adjusted only.
+    - **API surface:** `BaseLLMClient` (ABC: `ask`/`ask_with_tools`/`health_check`), `OpenAIChatClient`, `OpenAIEmbeddingClient`, `OpenRouterChatClient`, `LLMGateway` (new - this extra's own gateway, not the combined `ClientGateway` that also touches `web`/`ci` in `hrb_chatbot_v2` - that combination is exactly the cross-extra coupling this package's whole design exists to avoid).
+    - **Behavior parity:** ported with no logic changes beyond import paths.
+    - **Out of scope:** Anthropic/Bedrock/LangChain adapters (deferred). `ClientGateway`'s combined shape (split by design).
+    - **Open questions:** none blocking.
 
-- [ ] **Phase 5 (planned) — mcp extra.** Extraction of `mcp_client/`.
+- [x] **Phase 5 (done) — mcp extra.** NOT an extraction of `mcp_client/` (that folder is empty - a placeholder, confirmed). New, generic code: open an MCP session, list tools, call one tool - extracted from the generic portion of `hrb_chatbot_v2`'s `ai/rag_pipeline/tools/mcp_tools/__init__.py`, explicitly excluding its keyword-based intent routing (`is_leave_balance_query`, business logic) and its Postgres-backed circuit breaker (superseded by this package's own generic `CircuitBreaker` from Phase 1).
+  - **Spec:**
+    - **Context:** the real MCP client code lives outside `common/clients/` entirely - verified directly rather than assumed empty-folder-means-nothing-exists.
+    - **Source:** `mcp_tools/__init__.py`'s session-open/tool-call shape, generalized (no leave-balance-specific keywords).
+    - **API surface:** `call_mcp_tool(server_url, tool_name, arguments, access_token=None) -> dict`, `list_mcp_tools(server_url, access_token=None) -> list[dict]`.
+    - **Behavior parity:** N/A - generalized, not a literal port.
+    - **Out of scope:** keyword-based query routing (stays in `rag_retrieval_service`). Postgres-backed per-server circuit breaker (superseded by the generic one).
+    - **Open questions:** none blocking.
 
-- [ ] **Phase 6 (planned) — storage extra.** Extraction of `storage_client/`.
+- [x] **Phase 6 (done) — storage extra.** NOT a full extraction of `s3_upload_client.py` (most of its functions are leave-document/admin-doc business logic with hardcoded bucket conventions). New, generic code: presigned upload/download URL generation and object delete, parameterized by bucket - the business-specific wrappers (`generate_leave_document_upload_url`, etc.) stay in whichever service owns that feature.
+  - **Spec:**
+    - **Context:** `s3_upload_client.py` is one file doing two things - a generic S3 operation and several business-specific callers of it with hardcoded bucket/key conventions. Only the generic half belongs here.
+    - **Source:** `s3_upload_client.py`'s `generate_presigned_upload_url`/`generate_presigned_download_url`/`delete_object` shape, parameterized (bucket passed in, not read from a specific env var name).
+    - **API surface:** `generate_presigned_upload_url(bucket, key, content_type, expiry_seconds=300)`, `generate_presigned_download_url(bucket, key, expiry_seconds=300)`, `delete_object(bucket, key)`.
+    - **Behavior parity:** N/A - generalized (parameterized bucket instead of hardcoded env var names).
+    - **Out of scope:** leave-document/admin-doc specific functions, the local-reprocessing download path - all business-specific, stay in `rag_ingestion_service`.
+    - **Open questions:** none blocking.
 
-- [ ] **Phase 7 (planned) — web extra.** Extraction of `web_client/` (Tavily).
+- [x] **Phase 7 (done) — web extra.** Direct extraction of `web_client/tavily_client.py` - fully generic, no business logic, ported as-is.
+  - **Spec:**
+    - **Context:** clean, direct-port candidate.
+    - **Source:** `hrb_chatbot_v2`'s `common/clients/web_client/tavily_client.py`, ported with import paths adjusted only.
+    - **API surface:** `TavilyClient` (search, health_check).
+    - **Behavior parity:** ported with no logic changes.
+    - **Out of scope:** nothing - full port.
+    - **Open questions:** none blocking.
 
-- [ ] **Phase 8 (planned) — auth extra.** Extraction of `auth_client/` (OAuth2 client-credentials, JWT validation).
+- [x] **Phase 8 (done) — auth extra.** Extraction of `auth_client/oauth_client.py`'s OAuth2 client-credentials flow, **generalized** - the original hardcodes `HRB_LMS_MCP_OAUTH_*` env var names, which would make this extra only usable for one specific integration. Parameterized instead.
+  - **Spec:**
+    - **Context:** the original is a real OAuth2 client-credentials implementation, but hardcoded to one caller (`hrb_lms_mcp`) - not reusable as written for a future second OAuth2 target (e.g. a real human-to-app flow).
+    - **Source:** `oauth_client.py`'s token-caching logic, parameterized (token_url/client_id/client_secret passed in, not read from fixed env var names) and keyed by `client_id` so multiple OAuth2 targets can be cached independently in one process.
+    - **API surface:** `OAuth2ClientCredentials(token_url, client_id, client_secret)`, `.get_access_token() -> str`.
+    - **Behavior parity:** N/A - generalized from a single-purpose implementation.
+    - **Out of scope:** JWT *verification* (server-side, belongs to whichever service is the Resource Server, e.g. a future `api_gateway_service` phase) - this extra is the *client* side (acquiring a token), not verification.
+    - **Open questions:** none blocking.
 
-- [ ] **Phase 9 (planned) — email extra.** Extraction of `email_client/` (SES).
+- [x] **Phase 9 (done) — email extra.** Direct extraction of `email_client/ses_client.py` - generic, no business-specific recipient/content logic, ported as-is.
+  - **Spec:**
+    - **Context:** clean, direct-port candidate.
+    - **Source:** `hrb_chatbot_v2`'s `common/clients/email_client/ses_client.py`, ported with import paths adjusted only.
+    - **API surface:** `send_email(sender, recipient_email, subject, body_text, attachments=None, html_body=None, cc_addresses=None)` - `sender` now a parameter rather than read from `SES_SENDER_EMAIL` directly, so this extra doesn't assume one fixed sending identity.
+    - **Behavior parity:** ported with no logic changes beyond parameterizing `sender`.
+    - **Out of scope:** nothing else - full port.
+    - **Open questions:** none blocking.
 
-- [ ] **Phase 10 (planned) — ci extra.** Extraction of `ci_client/` (GitHub Actions). Platform-only - no core-business service should ever declare this extra.
+- [x] **Phase 10 (done) — ci extra.** Direct extraction of `ci_client/github_actions_client.py` - generic GitHub Actions REST wrapper, ported as-is. Platform-only: no core-business service should ever declare this extra.
+  - **Spec:**
+    - **Context:** clean, direct-port candidate; the only change is not hardcoding a default repo.
+    - **Source:** `hrb_chatbot_v2`'s `common/clients/ci_client/github_actions_client.py`, ported with import paths adjusted and no hardcoded default `repo` (the original defaults to `rvsree/hrb_chatbot_v2`, which has no meaning in a shared library - callers must pass `repo` explicitly).
+    - **API surface:** `GitHubActionsClient(token, repo, base_url=None)` - `list_workflow_runs`, `get_latest_run_sha`, `get_latest_run_sha_for_workflow`, `get_runs_for_sha`, `get_run_jobs`, `health_check`.
+    - **Behavior parity:** ported with no logic changes beyond removing the hardcoded default repo.
+    - **Out of scope:** nothing else - full port.
+    - **Open questions:** none blocking.
+
+- [x] **Phase 11 (done) — vectorstore extra.** Added after the scope correction above. Extraction of `base_vector_db_client.py` + `chroma_client.py` - genuinely generic (CLAUDE.md's own Base*Client pattern, four backend-agnostic operations, no document/business logic). **Deferred, not forgotten:** `pinecone_client.py`, `langchain_vector_store.py` - same pattern, ported in a fast-follow.
+  - **Spec:**
+    - **Context:** found while scoping Phase 2 - vector-store clients were sitting in `db_client/` with no extra of their own, a real gap in the original 10-extra design.
+    - **Source:** `hrb_chatbot_v2`'s `common/clients/db_client/{base_vector_db_client,chroma_client}.py`, ported with import paths adjusted only.
+    - **API surface:** `BaseVectorDBClient` (ABC: `upsert`/`query`/`delete`/`update_metadata`/`get_all_chunks`/`health_check`), `ChromaDBClient`.
+    - **Behavior parity:** ported with no logic changes.
+    - **Out of scope:** Pinecone/LangChain adapters (deferred).
+    - **Open questions:** none blocking.
