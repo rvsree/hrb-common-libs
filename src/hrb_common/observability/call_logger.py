@@ -1,5 +1,9 @@
 """Logs the start/duration/outcome of one outbound backend call - a context manager, defined once.
-Ported unmodified from hrb_chatbot_v2's common/logging/call_logger.py - behavior must not change."""
+Ported unmodified from hrb_chatbot_v2's common/logging/call_logger.py - behavior must not change.
+Phase 17: no change needed here for request_id - logger.py's own _RequestIdFilter already stamps
+it on every record from any get_logger()-created logger, including this one's, so adding it to
+this file's own extra dict too would just be redundant (the filter overwrites it with the same
+value regardless)."""
 
 import time
 from collections.abc import Iterator

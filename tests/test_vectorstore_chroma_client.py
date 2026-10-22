@@ -1,3 +1,6 @@
+import pytest
+
+from hrb_common.observability.circuit_breaker import CircuitOpenError
 from hrb_common.vectorstore.chroma_client import ChromaDBClient
 
 
@@ -44,3 +47,47 @@ def test_health_check_reports_healthy(tmp_path):
     client = ChromaDBClient(mode="persistent", persist_dir=str(tmp_path))
     result = client.health_check()
     assert result["status"] == "healthy"
+
+
+class _FlakyCollection:
+    """Fails query() a fixed number of times, then delegates to a real collection."""
+
+    def __init__(self, real_collection, fail_times):
+        self._real_collection = real_collection
+        self._fail_times = fail_times
+        self.call_count = 0
+
+    def query(self, **kwargs):
+        self.call_count += 1
+        if self.call_count <= self._fail_times:
+            raise ConnectionError("transient")
+        return self._real_collection.query(**kwargs)
+
+
+def test_query_retries_a_transient_failure_then_succeeds(tmp_path, monkeypatch):
+    client = ChromaDBClient(mode="persistent", persist_dir=str(tmp_path), collection_name="retry_test")
+    client.upsert("retry_test", ids=["chunk-1"], documents=["text"], embeddings=[[0.1, 0.2]])
+    real_collection = client.get_collection("retry_test")
+    flaky = _FlakyCollection(real_collection, fail_times=1)
+    monkeypatch.setattr(client, "get_collection", lambda collection_name=None: flaky)
+
+    result = client.query("retry_test", query_embedding=[0.1, 0.2], top_k=1)
+
+    assert result["ids"][0] == ["chunk-1"]
+    assert flaky.call_count == 2
+
+
+def test_query_trips_the_circuit_breaker_after_repeated_failures(tmp_path, monkeypatch):
+    client = ChromaDBClient(mode="persistent", persist_dir=str(tmp_path), collection_name="breaker_test")
+
+    def _always_fails(collection_name=None):
+        raise ConnectionError("down")
+
+    monkeypatch.setattr(client, "get_collection", _always_fails)
+
+    for _ in range(2):
+        with pytest.raises(ConnectionError):
+            client.query("breaker_test", query_embedding=[0.1], top_k=1)
+
+    with pytest.raises(CircuitOpenError):
+        client.query("breaker_test", query_embedding=[0.1], top_k=1)

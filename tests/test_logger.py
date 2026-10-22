@@ -1,6 +1,7 @@
 import logging
 
 from hrb_common.observability.logger import get_logger
+from hrb_common.observability.request_context import set_request_id
 
 
 def test_get_logger_returns_named_logger():
@@ -22,3 +23,23 @@ def test_get_logger_does_not_duplicate_handlers_on_repeat_calls():
 def test_get_logger_does_not_propagate_to_root():
     logger = get_logger("no_propagate_test")
     assert logger.propagate is False
+
+
+def test_logger_stamps_request_id_when_set(capsys):
+    set_request_id("req-abc-123")
+    logger = get_logger("request_id_test_set")
+
+    logger.info("hello")
+
+    captured = capsys.readouterr()
+    assert "[req-abc-123]" in captured.out
+
+
+def test_logger_stamps_dash_when_request_id_unset(capsys):
+    set_request_id(None)
+    logger = get_logger("request_id_test_unset")
+
+    logger.info("hello")
+
+    captured = capsys.readouterr()
+    assert "[-]" in captured.out

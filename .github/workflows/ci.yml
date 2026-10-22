@@ -1,0 +1,84 @@
+name: CI
+
+# Modeled on hrb_chatbot_v2's own ci.yml test+security jobs only - no deploy
+# workflow here, deliberately: this is a shared library, never deployed by
+# itself, so there's no Docker/ECR/App Runner step that would belong in it.
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  test:
+    name: Test suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the package, dev + every extra
+        run: pip install -e ".[dev,observability,db,cache,llm,mcp,storage,vectorstore,web,auth,email,ci]"
+
+      - name: Run the test suite
+        # No test here needs a real API key, network call, or AWS/Anthropic/
+        # Pinecone account - every one runs against a fake/mocked client,
+        # matching hrb_chatbot_v2's own testing convention this repo was
+        # extracted from.
+        run: pytest -v
+
+  static-analysis:
+    name: Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the package, dev + every extra
+        run: pip install -e ".[dev,observability,db,cache,llm,mcp,storage,vectorstore,web,auth,email,ci]"
+
+      - name: Install bandit
+        run: pip install bandit
+
+      - name: bandit - static security analysis of src/hrb_common
+        # -ll: only fail on MEDIUM severity and above - same threshold
+        # hrb_chatbot_v2's own CI uses, for the same reason (LOW findings
+        # are frequently stylistic, not exploitable).
+        run: bandit -r src/hrb_common -ll
+
+  dependency-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the package, dev + every extra
+        run: pip install -e ".[dev,observability,db,cache,llm,mcp,storage,vectorstore,web,auth,email,ci]"
+
+      - name: Install pip-audit
+        run: pip install pip-audit
+
+      - name: pip-audit - known CVEs in dependencies (report only, not yet blocking)
+        # No requirements.txt exists in this repo (pyproject.toml-only
+        # package), so there's no -r file to point pip-audit at - it audits
+        # the installed environment directly instead. continue-on-error
+        # matches hrb_chatbot_v2's own CI: visible in every run's log
+        # without blocking merges, until a human has triaged the backlog.
+        run: pip-audit
+        continue-on-error: true

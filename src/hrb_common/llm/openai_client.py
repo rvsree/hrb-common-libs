@@ -5,7 +5,9 @@ from openai import OpenAI
 
 from hrb_common.llm.base_llm_client import BaseLLMClient
 from hrb_common.observability.call_logger import log_backend_call
+from hrb_common.observability.circuit_breaker import CircuitBreaker
 from hrb_common.observability.logger import get_logger
+from hrb_common.observability.retry import with_retry
 from hrb_common.observability.secrets import read_secret
 
 logger = get_logger("openai_client")
@@ -45,6 +47,7 @@ class OpenAIChatClient(BaseLLMClient):
             self.client = None
 
         self.last_token_usage: dict | None = None
+        self._circuit_breaker = CircuitBreaker(name="openai")
 
     def get_client(self):
         if self.client is None:
@@ -63,10 +66,15 @@ class OpenAIChatClient(BaseLLMClient):
         messages.append({"role": "user", "content": message_text})
 
         resolved_model = model_name_override or self.model
-        with log_backend_call(logger, "openai", "chat.ask", model=resolved_model, temperature=temperature):
-            response = self.get_client().chat.completions.create(
+
+        @with_retry()
+        def _do():
+            return self.get_client().chat.completions.create(
                 model=resolved_model, messages=messages, temperature=temperature, max_tokens=max_tokens
             )
+
+        with self._circuit_breaker, log_backend_call(logger, "openai", "chat.ask", model=resolved_model, temperature=temperature):
+            response = _do()
 
         if response.usage:
             self.last_token_usage = {
@@ -81,11 +89,15 @@ class OpenAIChatClient(BaseLLMClient):
         return answer if answer is not None else ""
 
     def ask_with_tools(self, messages, tools, temperature=0.0, max_tokens=None, tool_choice="auto"):
-        with log_backend_call(logger, "openai", "chat.ask_with_tools", model=self.model, tool_count=len(tools)):
-            response = self.get_client().chat.completions.create(
+        @with_retry()
+        def _do():
+            return self.get_client().chat.completions.create(
                 model=self.model, messages=messages, tools=tools, tool_choice=tool_choice,
                 temperature=temperature, max_tokens=max_tokens,
             )
+
+        with self._circuit_breaker, log_backend_call(logger, "openai", "chat.ask_with_tools", model=self.model, tool_count=len(tools)):
+            response = _do()
         return response.model_dump()
 
     def health_check(self) -> dict:
@@ -138,6 +150,7 @@ class OpenAIEmbeddingClient:
             )
         else:
             self.client = None
+        self._circuit_breaker = CircuitBreaker(name="openai_embedding")
 
     def get_client(self):
         if self.client is None:
@@ -152,8 +165,13 @@ class OpenAIEmbeddingClient:
             return []
 
         resolved_model = model or self.model
-        with log_backend_call(logger, "openai", "embeddings.create", model=resolved_model, text_count=len(texts)):
-            response = self.get_client().embeddings.create(model=resolved_model, input=texts)
+
+        @with_retry()
+        def _do():
+            return self.get_client().embeddings.create(model=resolved_model, input=texts)
+
+        with self._circuit_breaker, log_backend_call(logger, "openai", "embeddings.create", model=resolved_model, text_count=len(texts)):
+            response = _do()
 
         return [item.embedding for item in response.data]
 

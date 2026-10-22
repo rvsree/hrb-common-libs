@@ -8,7 +8,9 @@ import chromadb
 from chromadb.config import Settings as ChromaSettings
 
 from hrb_common.observability.call_logger import log_backend_call
+from hrb_common.observability.circuit_breaker import CircuitBreaker
 from hrb_common.observability.logger import get_logger
+from hrb_common.observability.retry import with_retry
 from hrb_common.observability.secrets import read_secret
 from hrb_common.vectorstore.base_vector_db_client import BaseVectorDBClient
 
@@ -40,6 +42,7 @@ class ChromaDBClient(BaseVectorDBClient):
 
         self._client = None
         self.collection_lock = threading.RLock()  # see hrb_chatbot_v2's Phase 145 note on why RLock, not Lock
+        self._circuit_breaker = CircuitBreaker(name="chromadb")
 
     def get_client(self):
         if self._client is None:
@@ -75,24 +78,44 @@ class ChromaDBClient(BaseVectorDBClient):
         return self.get_client().get_or_create_collection(name=name)
 
     def upsert(self, collection_name, ids, documents, embeddings, metadatas=None) -> None:
-        with self.collection_lock, log_backend_call(logger, "chromadb", "vector.upsert", collection=collection_name, chunk_count=len(ids)):
+        @with_retry()
+        def _do():
             self.get_collection(collection_name).upsert(ids=ids, documents=documents, embeddings=embeddings, metadatas=metadatas)
 
+        with self.collection_lock, self._circuit_breaker, log_backend_call(logger, "chromadb", "vector.upsert", collection=collection_name, chunk_count=len(ids)):
+            _do()
+
     def query(self, collection_name, query_embedding, top_k=5, where=None) -> dict:
-        with self.collection_lock, log_backend_call(logger, "chromadb", "vector.query", collection=collection_name, top_k=top_k):
+        @with_retry()
+        def _do():
             return self.get_collection(collection_name).query(query_embeddings=[query_embedding], n_results=top_k, where=where, include=["documents", "metadatas", "distances"])
 
+        with self.collection_lock, self._circuit_breaker, log_backend_call(logger, "chromadb", "vector.query", collection=collection_name, top_k=top_k):
+            return _do()
+
     def delete(self, collection_name, ids) -> None:
-        with self.collection_lock, log_backend_call(logger, "chromadb", "vector.delete", collection=collection_name, chunk_count=len(ids)):
+        @with_retry()
+        def _do():
             self.get_collection(collection_name).delete(ids=ids)
 
+        with self.collection_lock, self._circuit_breaker, log_backend_call(logger, "chromadb", "vector.delete", collection=collection_name, chunk_count=len(ids)):
+            _do()
+
     def update_metadata(self, collection_name, ids, metadatas) -> None:
-        with self.collection_lock, log_backend_call(logger, "chromadb", "vector.update_metadata", collection=collection_name, chunk_count=len(ids)):
+        @with_retry()
+        def _do():
             self.get_collection(collection_name).update(ids=ids, metadatas=metadatas)
 
+        with self.collection_lock, self._circuit_breaker, log_backend_call(logger, "chromadb", "vector.update_metadata", collection=collection_name, chunk_count=len(ids)):
+            _do()
+
     def get_all_chunks(self, collection_name) -> list[dict]:
-        with self.collection_lock, log_backend_call(logger, "chromadb", "vector.get_all_chunks", collection=collection_name):
-            result = self.get_collection(collection_name).get(include=["documents", "metadatas", "embeddings"])
+        @with_retry()
+        def _do():
+            return self.get_collection(collection_name).get(include=["documents", "metadatas", "embeddings"])
+
+        with self.collection_lock, self._circuit_breaker, log_backend_call(logger, "chromadb", "vector.get_all_chunks", collection=collection_name):
+            result = _do()
 
         embeddings = result.get("embeddings")
         return [

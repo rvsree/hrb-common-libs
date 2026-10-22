@@ -9,18 +9,23 @@ description = "Shared connector + observability library for the HRB chatbot micr
 requires-python = ">=3.12,<3.13"
 
 [project.optional-dependencies]
-observability = ["structlog", "tenacity"]
-db = ["hrb-common-libs[observability]", "psycopg[binary]"]
-vectorstore = ["hrb-common-libs[observability]", "chromadb"]
-cache = ["hrb-common-libs[observability]", "redis"]
-llm = ["hrb-common-libs[observability]", "openai", "langchain-openai"]
+# Pinned (Phase 14) to the same versions hrb_chatbot_v2's own requirements.txt
+# proved working, so both repos stay compatible. structlog/tenacity/
+# tavily-python/PyGithub/respx stay unpinned - none appear in hrb_chatbot_v2's
+# requirements.txt/requirements-dev.txt, so there's no proven version to match.
+# mcp==1.9.4/pydantic==2.13.5 untouched - Phase 5's own version-conflict fix.
+observability = ["structlog", "tenacity", "boto3==1.43.89"]
+db = ["hrb-common-libs[observability]", "psycopg[binary]==3.2.5"]
+vectorstore = ["hrb-common-libs[observability]", "chromadb==1.3.5", "pinecone==7.3.0", "langchain-pinecone==0.2.13", "langchain-chroma==0.2.6", "langchain-openai==0.3.35"]
+cache = ["hrb-common-libs[observability]", "redis==8.1.0"]
+llm = ["hrb-common-libs[observability]", "openai==2.54.0", "langchain-openai==0.3.35", "anthropic==1.2.0", "boto3==1.43.89"]
 mcp = ["hrb-common-libs[observability]", "mcp==1.9.4", "pydantic==2.13.5"]
-storage = ["hrb-common-libs[observability]", "boto3"]
+storage = ["hrb-common-libs[observability]", "boto3==1.43.89"]
 web = ["hrb-common-libs[observability]", "tavily-python"]
-auth = ["hrb-common-libs[observability]", "httpx", "pyjwt"]
-email = ["hrb-common-libs[observability]", "boto3"]
+auth = ["hrb-common-libs[observability]", "httpx==0.28.1", "pyjwt==2.10.1"]
+email = ["hrb-common-libs[observability]", "boto3==1.43.89"]
 ci = ["hrb-common-libs[observability]", "PyGithub"]
-dev = ["pytest", "pytest-asyncio", "respx"]
+dev = ["pytest==8.4.2", "pytest-asyncio==1.2.0", "respx"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

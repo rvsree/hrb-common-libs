@@ -3,6 +3,8 @@ hrb_chatbot_v2's combined ClientGateway (which also builds web/ci clients). That
 combination is exactly the cross-extra coupling this package's extras design exists
 to avoid - a service installing [llm] should never see web/ci imports at all."""
 
+from hrb_common.llm.anthropic_client import AnthropicChatClient
+from hrb_common.llm.bedrock_client import BedrockChatClient
 from hrb_common.llm.open_router_client import OpenRouterChatClient
 from hrb_common.llm.openai_client import OpenAIChatClient, OpenAIEmbeddingClient
 
@@ -12,6 +14,8 @@ class LLMGateway:
         self._openai_chat: OpenAIChatClient | None = None
         self._openai_embedding: OpenAIEmbeddingClient | None = None
         self._openrouter_chat: OpenRouterChatClient | None = None
+        self._anthropic_chat: AnthropicChatClient | None = None
+        self._bedrock_chat: BedrockChatClient | None = None
 
     def openai_chat(self) -> OpenAIChatClient:
         if self._openai_chat is None:
@@ -27,6 +31,16 @@ class LLMGateway:
         if self._openrouter_chat is None:
             self._openrouter_chat = OpenRouterChatClient()
         return self._openrouter_chat
+
+    def anthropic_chat(self) -> AnthropicChatClient:
+        if self._anthropic_chat is None:
+            self._anthropic_chat = AnthropicChatClient()
+        return self._anthropic_chat
+
+    def bedrock_chat(self) -> BedrockChatClient:
+        if self._bedrock_chat is None:
+            self._bedrock_chat = BedrockChatClient()
+        return self._bedrock_chat
 
 
 _shared_gateway: LLMGateway | None = None
